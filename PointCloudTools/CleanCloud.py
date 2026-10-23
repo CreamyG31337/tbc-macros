@@ -6,9 +6,12 @@ as ground. Two tests:
 - small floating pieces: clumps of points not connected to anything big (the gap is set from
   the measured point spacing) are dropped unless they lie on the surface;
 - local plane: each point is compared with the best-fit plane through its neighbourhood (the
-  idea behind CloudCompare's Noise filter); points further than the tolerance are dropped, and
-  the rest can optionally be moved onto that plane. Areas that aren't flat (edges, corners) are
-  kept as they are. Sparse parts of a scan are judged with larger cells.
+  idea behind CloudCompare's Noise filter); points further than the tolerance are dropped. Areas
+  that aren't flat (edges, corners) are kept as they are. Sparse parts of a scan are judged with
+  larger cells.
+Optionally the kept points are smoothed: moved onto curved (quadratic) local surfaces fitted in
+overlapping blocks, a moving least-squares smooth like PCL's, with larger blocks where the noise
+is high.
 Cell size and tolerance are picked from the measured point spacing and noise by default, and a
 run that would remove more than 20% of the points is refused.
 The result is written as a new scan in a new region (and optionally the removed points in a
@@ -59,6 +62,13 @@ AUTO_TOL = 4.0          # tolerance = 4 x the measured scatter about the planes
 MIN_CELL, MAX_CELL = 0.02, 0.5
 MAX_REMOVED = 0.2       # refuse to write if more than this share would be removed
 NEIGHBOURS = [(i, j, k) for i in (-1, 0, 1) for j in (-1, 0, 1) for k in (-1, 0, 1)]
+# smoothing ("move kept points onto the local surface"): curved surfaces in overlapping blocks
+SMOOTH_BLOCK = 1.2      # block spacing = 1.2 x cell (about 3.5 x the point spacing)
+SMOOTH_MIN_POINTS = 15  # points a block needs for a fit
+SMOOTH_RIDGE = 0.01     # damping of the curvature terms
+SMOOTH_MAX_MOVE = 4.0   # a block only moves points within this x its residual RMS
+SMOOTH_NOISE_K = 8.0    # 2 x blocks where the residual RMS x this exceeds the block spacing...
+SMOOTH_RELIEF = 1.25    # ...and the 2 x blocks' RMS is less than this x the small ones'
 
 
 def Setup(cmdData, macroFileFolder):
@@ -271,10 +281,166 @@ def small_pieces(pts, gap, min_points, tick=None):
     return bytearray(1 if k in small else 0 for k in keys)
 
 
+def solve(A, b):
+    """x with A x = b (Gaussian elimination, partial pivoting), or None if A is singular."""
+    n = len(b)
+    M = [A[i][:] + [b[i]] for i in range(n)]
+    for k in range(n):
+        p = max(range(k, n), key=lambda i: abs(M[i][k]))
+        if abs(M[p][k]) < 1e-18:
+            return None
+        M[k], M[p] = M[p], M[k]
+        for i in range(k + 1, n):
+            f = M[i][k] / M[k][k]
+            if f:
+                for j in range(k, n + 1):
+                    M[i][j] -= f * M[k][j]
+    x = [0.0] * n
+    for i in range(n - 1, -1, -1):
+        x[i] = (M[i][n] - sum(M[i][j] * x[j] for j in range(i + 1, n))) / M[i][i]
+    return x
+
+
+def corners(p, c):
+    """The 8 block vertices around p (blocks are c apart and reach c around their vertex) with
+    tent weights that sum to 1, so a point's blend of block surfaces has no seams."""
+    fx, fy, fz = p[0] / c, p[1] / c, p[2] / c
+    ix, iy, iz = int(math.floor(fx)), int(math.floor(fy)), int(math.floor(fz))
+    rx, ry, rz = fx - ix, fy - iy, fz - iz
+    out = []
+    for dx, wx in ((0, 1 - rx), (1, rx)):
+        for dy, wy in ((0, 1 - ry), (1, ry)):
+            for dz, wz in ((0, 1 - rz), (1, rz)):
+                out.append(((ix + dx, iy + dy, iz + dz), wx * wy * wz))
+    return out
+
+
+def block_surfaces(pts, c, index, tick=None):
+    """Curved local surfaces: {vertex: (centre, a, b, normal, coef, sigma)} with the height along
+    the normal h = coef . (1, u, v, u2, uv, v2), u and v along a and b in units of c, fitted
+    (tent-weighted) to the points index lists. sigma is the RMS of the fit's residuals."""
+    n_idx = float(len(index)) or 1.0
+    sums = {}
+    for j, i in enumerate(index):
+        if tick and j % 10000 == 0:
+            tick(0.4 * j / n_idx)
+        x, y, z = pts[i]
+        for k, w in corners(pts[i], c):
+            s = sums.get(k)
+            if s is None:
+                s = sums[k] = [0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+            s[0] += 1; s[1] += w; s[2] += w * x; s[3] += w * y; s[4] += w * z
+            s[5] += w * x * x; s[6] += w * y * y; s[7] += w * z * z; s[8] += w * x * y; s[9] += w * x * z; s[10] += w * y * z
+    frames = {}
+    for k, s in sums.items():
+        if s[0] < SMOOTH_MIN_POINTS:
+            continue
+        W = s[1]
+        mx, my, mz = s[2] / W, s[3] / W, s[4] / W
+        cov = (s[5] / W - mx * mx, s[6] / W - my * my, s[7] / W - mz * mz,
+               s[8] / W - mx * my, s[9] / W - mx * mz, s[10] / W - my * mz)
+        nv = sym3_eig(cov)[1]
+        t = (1.0, 0.0, 0.0) if abs(nv[0]) < 0.9 else (0.0, 1.0, 0.0)
+        a = (nv[1] * t[2] - nv[2] * t[1], nv[2] * t[0] - nv[0] * t[2], nv[0] * t[1] - nv[1] * t[0])
+        an = math.sqrt(a[0] ** 2 + a[1] ** 2 + a[2] ** 2)
+        a = (a[0] / an, a[1] / an, a[2] / an)
+        b = (nv[1] * a[2] - nv[2] * a[1], nv[2] * a[0] - nv[0] * a[2], nv[0] * a[1] - nv[1] * a[0])
+        frames[k] = ((mx, my, mz), a, b, nv, [0.0] * 28)
+    for j, i in enumerate(index):
+        if tick and j % 10000 == 0:
+            tick(0.4 + 0.6 * j / n_idx)
+        x, y, z = pts[i]
+        for k, w in corners(pts[i], c):
+            f = frames.get(k)
+            if f is None:
+                continue
+            (cx, cy, cz), a, b, nv, acc = f
+            px, py, pz = x - cx, y - cy, z - cz
+            u = (px * a[0] + py * a[1] + pz * a[2]) / c
+            v = (px * b[0] + py * b[1] + pz * b[2]) / c
+            h = px * nv[0] + py * nv[1] + pz * nv[2]
+            # weighted normal equations for (1, u, v, uu, uv, vv), upper triangle row by row, then
+            # the right-hand side and h2 (written out: this is the slowest loop in the macro)
+            wu, wv = w * u, w * v
+            uu, uv, vv = u * u, u * v, v * v
+            wuu, wuv, wvv = wu * u, wu * v, wv * v
+            acc[0] += w; acc[1] += wu; acc[2] += wv; acc[3] += wuu; acc[4] += wuv; acc[5] += wvv
+            acc[6] += wuu; acc[7] += wuv; acc[8] += wuu * u; acc[9] += wuu * v; acc[10] += wuv * v
+            acc[11] += wvv; acc[12] += wuv * u; acc[13] += wuv * v; acc[14] += wvv * v
+            acc[15] += wuu * uu; acc[16] += wuu * uv; acc[17] += wuu * vv
+            acc[18] += wuv * uv; acc[19] += wuv * vv
+            acc[20] += wvv * vv
+            wh = w * h
+            acc[21] += wh; acc[22] += wu * h; acc[23] += wv * h; acc[24] += wuu * h; acc[25] += wuv * h; acc[26] += wvv * h
+            acc[27] += wh * h
+    blocks = {}
+    for k, (centre, a, b, nv, acc) in frames.items():
+        A = [[0.0] * 6 for _ in range(6)]
+        j2 = 0
+        for p in range(6):
+            for q in range(p, 6):
+                A[p][q] = A[q][p] = acc[j2]
+                j2 += 1
+        for p in range(3, 6):  # damp the curvature terms so sparse or lopsided blocks stay near-flat
+            A[p][p] += SMOOTH_RIDGE * acc[0]
+        rhs = acc[21:27]
+        coef = solve(A, rhs) or [acc[21] / acc[0], 0.0, 0.0, 0.0, 0.0, 0.0]
+        ss = acc[27] - sum(coef[p] * rhs[p] for p in range(6))
+        blocks[k] = (centre, a, b, nv, coef, math.sqrt(max(0.0, ss / acc[0])))
+    return blocks
+
+
+def on_surface(p, blocks, c):
+    """(p moved onto the blend of the block surfaces around it, their blended sigma), or
+    (p, None) if no block has a say. A block whose surface is more than SMOOTH_MAX_MOVE x its sigma
+    away has none: the point is off it, or the fit doesn't reach there."""
+    x, y, z = p
+    sx = sy = sz = sw = ss = 0.0
+    for k, w in corners(p, c):
+        bl = blocks.get(k)
+        if bl is None:
+            continue
+        (cx, cy, cz), a, b, nv, f, sigma = bl
+        px, py, pz = x - cx, y - cy, z - cz
+        u = (px * a[0] + py * a[1] + pz * a[2]) / c
+        v = (px * b[0] + py * b[1] + pz * b[2]) / c
+        d = f[0] + f[1] * u + f[2] * v + f[3] * u * u + f[4] * u * v + f[5] * v * v - (px * nv[0] + py * nv[1] + pz * nv[2])
+        if abs(d) > SMOOTH_MAX_MOVE * max(sigma, 0.001):
+            continue
+        sx += w * (x + d * nv[0]); sy += w * (y + d * nv[1]); sz += w * (z + d * nv[2])
+        ss += w * sigma; sw += w
+    if sw < 1e-9:
+        return p, None
+    return (sx / sw, sy / sw, sz / sw), ss / sw
+
+
+def smooth(pts, index, c, tick=None):
+    """Moves the points index lists onto curved local surfaces (a moving least-squares smooth);
+    returns ({index: new point}, points smoothed with 2 x c blocks). Blocks of c where the noise is
+    low; 2 x c where it is high (sigma x SMOOTH_NOISE_K > c) and the larger blocks fit about as
+    well (so relief at edges and corners isn't averaged away), or the small blocks are too sparse."""
+    sub = (lambda a, b: (lambda f: tick(a + (b - a) * f))) if tick else (lambda a, b: None)
+    fine = block_surfaces(pts, c, index, sub(0.0, 0.45))
+    coarse = block_surfaces(pts, 2 * c, index[::2], sub(0.45, 0.65))  # 4 x the points per block: half do
+    moved, n2 = {}, 0
+    n_idx = float(len(index)) or 1.0
+    for j, i in enumerate(index):
+        if tick and j % 10000 == 0:
+            tick(0.65 + 0.35 * j / n_idx)
+        q, s1 = on_surface(pts[i], fine, c)
+        if s1 is None or SMOOTH_NOISE_K * s1 > c:
+            q2, s2 = on_surface(pts[i], coarse, 2 * c)
+            if s2 is not None and (s1 is None or s2 < SMOOTH_RELIEF * s1):
+                q = q2
+                n2 += 1
+        moved[i] = q
+    return moved, n2
+
+
 def clean(pts, cell, tol, flatten, keep_rough, drop_isolated, tick=None, gap=0.0, min_piece=0, levels=LEVELS):
     """Returns (out, counts, info): out = [(index, (x, y, z))] of the points to keep (moved onto
-    the plane if flatten), counts by outcome, and info = [(cell, tolerance, scatter, planes)] per
-    level.
+    curved local surfaces fitted to the kept points if flatten; see smooth), counts by outcome, and
+    info = [(cell, tolerance, scatter, planes)] per level.
     Planes are fitted at cell, 2 x cell, 4 x cell (levels); each point is judged at the finest level
     with enough points around it, so sparse parts of a scan get larger cells. tol is the
     tolerance at the finest level (None: AUTO_TOL x the measured scatter); coarser levels scale it
@@ -285,7 +451,7 @@ def clean(pts, cell, tol, flatten, keep_rough, drop_isolated, tick=None, gap=0.0
     finest tolerance of a flat finest plane, or where there is none, within THICK_K x the
     thickness of a coarser one fitted without the small pieces.
     tick(fraction) is called now and then with progress from 0 to 1."""
-    stages = levels + 0.5 + (1 if min_piece > 0 else 0)
+    stages = levels + 0.5 + (1 if min_piece > 0 else 0) + (3 if flatten else 0)
     done = [0]
 
     def sub():
@@ -316,8 +482,9 @@ def clean(pts, cell, tol, flatten, keep_rough, drop_isolated, tick=None, gap=0.0
             raise ValueError("no flat surfaces to measure the noise on; untick automatic settings and set them by hand")
         tol = round(AUTO_TOL * s0 / 0.0005) * 0.0005
     tols = [max(tol, tol * f[2] / s0) if f[2] and s0 else tol for f in fits]
-    counts = {"small piece": 0, "small piece on surface": 0, "flat kept": 0, "flattened": 0, "off surface": 0,
-              "rough kept": 0, "rough dropped": 0, "isolated kept": 0, "isolated dropped": 0}
+    counts = {"small piece": 0, "small piece on surface": 0, "flat kept": 0, "off surface": 0,
+              "rough kept": 0, "rough dropped": 0, "isolated kept": 0, "isolated dropped": 0,
+              "smoothed": 0, "smoothed with larger blocks": 0}
     for level in range(1, levels):
         counts["judged at level %d" % level] = 0
     out = []
@@ -374,12 +541,17 @@ def clean(pts, cell, tol, flatten, keep_rough, drop_isolated, tick=None, gap=0.0
             counts["off surface"] += 1
             continue
         counts["flat kept"] += 1
-        if flatten:
-            nv = pl[1]
-            p = (p[0] - d * nv[0], p[1] - d * nv[1], p[2] - d * nv[2])
-            counts["flattened"] += 1
         out.append((i, p))
+    if flatten and out:
+        moved, n2 = smooth(pts, [i for i, _ in out], SMOOTH_BLOCK * cell, sub_range(tick, (base + 0.5) / stages, 1.0))
+        out = [(i, moved[i]) for i, _ in out]
+        counts["smoothed"] = sum(1 for i, p in out if p is not pts[i])
+        counts["smoothed with larger blocks"] = n2
     return out, counts, [(f[0], tols[k], f[2], len(f[1])) for k, f in enumerate(fits)]
+
+
+def sub_range(tick, a, b):
+    return (lambda f: tick(a + (b - a) * f)) if tick else None
 
 
 # ---------------------------------------------------------------- TBC side
@@ -496,10 +668,11 @@ class CleanCloud(StackPanel):  # TBC hosts this panel because cmdData.UIForm nam
         if total > MAX_POINTS:
             self.log(f"{total:,} points is more than this macro handles ({MAX_POINTS:,}); use smaller regions.")
             return None
-        if total > LARGE_POINTS:
-            # about 20-30 s per 1.7 M points in TBC in testing
-            self.log(f"Large selection: expect about {max(1, round(total / 1.7e6 * 25 / 60))} min and "
-                     f"{total / 2e6:.0f} GB of memory. Cancel stops it.")
+        # about 20-30 s per 1.7 M points in TBC in testing; smoothing adds about 75 s per million
+        minutes = (total / 1.7e6 * 25 + (total / 1e6 * 75 if settings[3] else 0)) / 60
+        if total > LARGE_POINTS or minutes > 2:
+            self.log(f"Large job: expect about {max(1, round(minutes))} min and "
+                     f"{total / 2e6:.1f} GB of memory. Cancel stops it.")
         noop = Action[Int32](lambda pct: None)
         self.progress(0, "Reading points")
         infos, pts, origin = [], [], None
@@ -541,6 +714,8 @@ class CleanCloud(StackPanel):  # TBC hosts this panel because cmdData.UIForm nam
         steps = [(1.0, "Finding floating pieces")] if min_piece else []
         steps += [(1.0, "Fitting planes, %d mm cells" % round(cell * 2 ** k * 1000)) for k in range(LEVELS)]
         steps += [(0.5, "Sorting points")]
+        if settings[3]:
+            steps += [(3.0, "Smoothing onto %d mm curved surfaces" % round(SMOOTH_BLOCK * cell * 1000))]
         total_w = sum(w for w, _ in steps)
 
         def tick(f):
@@ -560,8 +735,8 @@ class CleanCloud(StackPanel):  # TBC hosts this panel because cmdData.UIForm nam
                  + (f" ({AUTO_CELL:g} x spacing, {AUTO_TOL:g} x the {scatter0 * 1000:.1f} mm scatter)" if auto else ""))
         self.log("  sparse areas use larger cells: " + "; ".join(
             f"{c * 1000:.0f} mm, tolerance {t * 1000:.1f} mm" for c, t, _, _ in info[1:]))
-        labels = ["small piece", "small piece on surface", "flat kept", "flattened", "off surface", "rough kept",
-                  "rough dropped", "isolated kept", "isolated dropped"]
+        labels = ["small piece", "small piece on surface", "flat kept", "off surface", "rough kept",
+                  "rough dropped", "isolated kept", "isolated dropped", "smoothed", "smoothed with larger blocks"]
         labels += ["judged at level %d" % k for k in range(1, LEVELS)]
         for label in labels:  # IronPython 3.4 dicts are unordered
             value = counts[label]

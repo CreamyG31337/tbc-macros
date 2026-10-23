@@ -11,7 +11,7 @@
     <Label Content="Keep points within this distance of the local surface:"/>
     <Wpf:DistanceEdit x:Name="tolerance"/>
     <CheckBox x:Name="removeSmallCB" Content="Remove small floating pieces (clumps of noise not attached to the surface)" IsChecked="True" Margin="0,4,0,0"/>
-    <CheckBox x:Name="flattenCB" Content="Move kept points onto the local surface (smooths)" IsChecked="False" Margin="0,4,0,0"/>
+    <CheckBox x:Name="flattenCB" Content="Smooth: move kept points onto curved local surfaces (keeps the rock's shape; slower)" IsChecked="False" Margin="0,4,0,0"/>
     <CheckBox x:Name="keepRoughCB" Content="Keep points where the surface isn't flat (corners, edges, vegetation)" IsChecked="True" Margin="0,4,0,0"/>
     <CheckBox x:Name="dropIsolatedCB" Content="Remove isolated points (under 10 points in the surrounding cells)" IsChecked="True" Margin="0,4,0,0"/>
     <CheckBox x:Name="writeRemovedCB" Content="Also write the removed points to a '- removed' region (to check what was taken)" IsChecked="True" Margin="0,4,0,0"/>

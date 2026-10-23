@@ -35,9 +35,11 @@ def test_clean_cloud():
     s50, s95 = ns["point_spacing"](pts)
     cell = min(ns["MAX_CELL"], max(ns["MIN_CELL"], round(ns["AUTO_CELL"] * s50 / 0.005) * 0.005))
     gap = max(1.2 * s50, s95)
-    ticks = []
     for flatten in (False, True):
+        ticks = []
         out, counts, info = ns["clean"](pts, cell, None, flatten, True, True, ticks.append, gap, ns["MIN_PIECE"])
+        assert all(b >= a for a, b in zip(ticks, ticks[1:])), "progress went backwards"
+        assert all(0 <= t <= 1 for t in ticks)
         kept = {"floor": 0, "wall": 0, "outlier": 0}
         dev = {"floor": [], "wall": []}
         for i, p in out:
@@ -52,10 +54,8 @@ def test_clean_cloud():
               f"rms floor {rms['floor']:.2f} wall {rms['wall']:.2f} mm")
         assert kept["floor"] >= 0.98 * 60000 and kept["wall"] >= 0.98 * 60000, "real surface lost"
         assert kept["outlier"] <= 15, "outliers kept"
-        if flatten:  # 4 mm noise; planes over 3 x 3 x 3 small cells only average it down so far
+        if flatten:  # 4 mm noise
             assert rms["floor"] < 0.6 * 4 and rms["wall"] < 0.6 * 4, "smoothing didn't reduce the noise"
-    assert all(b >= a for a, b in zip(ticks[:len(ticks) // 2], ticks[1:len(ticks) // 2])), "progress went backwards"
-    assert all(0 <= t <= 1 for t in ticks)
 
 
 def test_separate_objects():

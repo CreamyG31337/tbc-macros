@@ -62,9 +62,23 @@ Test data used (all of rock walls and trenches):
 - **Tried and dropped:** refitting planes without outliers (little gain, slower), a local density
   test (no gain on real data), keeping small pieces in rough areas (lost more noise than it
   saved rock).
-- **Not solved:** a layer of noise 1-2.5 cm off the surface. It can't be told from real roughness
-  by distance; smoothing onto a better local surface is the likely fix. "Move kept points onto
-  the local surface" uses the fitted planes and also flattens real relief smaller than a cell.
+- **Smoothing: curved surfaces instead of the cell planes.** The first "move onto the local
+  surface" moved points onto the cell planes. On a synthetic rough wall (17 mm spacing) it made
+  6 mm noise slightly worse at the automatic cell (6.0 -> 6.7 mm from the true surface: it flattens
+  relief) and left 20 mm noise untouched (all "rough"). Quadratic surfaces fitted in overlapping,
+  tent-weighted blocks and blended (moving least squares, as in CloudCompare's PCL plugin) took
+  6 mm noise to 1.8-2.0 mm and 20 mm to 5.8 mm, with 2 x blocks where a block's residual RMS x 8
+  exceeds its size. On real scans, fitted to half the points and scored on the other half (lower
+  = follows the surface better; includes the noise): NavVis problem area 8.2 -> 5.5 mm, NavVis
+  wall 7.5 -> 3.8 mm, SX12 3.2 -> 1.7 mm. Best block size about 3.5 x the spacing. Using 2 x
+  blocks wherever the residual is high made real scans worse (the residual there is relief, not
+  noise); only switching where the 2 x blocks fit nearly as well (RMS < 1.25 x) is safe. Sparse or
+  lopsided blocks need their curvature damped, or their surfaces swing far off near the edges
+  (a test point moved 0.38 m before the damping and the "no move beyond 4 x the block's RMS" rule).
+  A thick NavVis area turned out to be one noisy layer, not two misaligned passes (1 vs 2
+  Gaussian layers per 15 cm patch: two in 2-3% of patches, as on a good wall).
+  Cost: about 75 s per million points in CPython, roughly 5 x the filter.
+- **Not solved:** noise far enough off to look like relief at the block size stays.
 - Ropes, hoses and anchors are long or attached pieces and mostly stay; separate them first.
   Hoses are sometimes partly removed.
 - With floating-piece removal off, isolated flyers are judged by coarser planes and some near
