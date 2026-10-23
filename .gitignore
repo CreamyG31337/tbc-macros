@@ -1,0 +1,21 @@
+# private notes and test data stay out of the repository
+private/
+
+# survey data and test outputs
+*.las
+*.laz
+*.e57
+*.rcp
+*.rcs
+*.xyz
+*.npz
+*.png
+*.csv
+
+# Python
+__pycache__/
+*.pyc
+.venv*/
+
+# TBC writes this command cache next to installed macros
+*.dict

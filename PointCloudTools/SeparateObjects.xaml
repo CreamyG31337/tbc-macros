@@ -1,0 +1,40 @@
+<StackPanel HorizontalAlignment="Stretch"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:Wpf="clr-namespace:Trimble.Vce.UI.Controls.Wpf;assembly=Trimble.Vce.UI.Controls">
+    <Label Content="Point cloud region to separate objects from:"/>
+    <Wpf:MemberSelection x:Name="regionPicker"/>
+    <Label Content="Object type:"/>
+    <ComboBox x:Name="typeCombo" SelectedIndex="0">
+        <ComboBoxItem Content="Anchor / dowel (one click)"/>
+        <ComboBoxItem Content="Hose / cable (click along it, then Finish hose)"/>
+        <ComboBoxItem Content="Other junk (one click)"/>
+    </ComboBox>
+    <Label Content="Click on the object (snap to point clouds):"/>
+    <Wpf:CoordinateEdit x:Name="coordCtl" AutoTab="False"/>
+    <Grid Margin="0,4,0,4">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+        <Button x:Name="finishHoseBtn" Grid.Column="0" Content="Finish hose" Click="FinishHoseClicked" Margin="0,0,2,0"/>
+        <Button x:Name="undoBtn" Grid.Column="1" Content="Undo last" Click="UndoClicked" Margin="2,0,0,0"/>
+    </Grid>
+    <Expander Header="Settings" IsExpanded="False">
+        <StackPanel>
+            <Label Content="Anchor / junk radius around the click:"/>
+            <Wpf:DistanceEdit x:Name="objectRadius"/>
+            <Label Content="Hose radius around the clicked line:"/>
+            <Wpf:DistanceEdit x:Name="hoseRadius"/>
+            <Label Content="Take points standing more than this off the rock:"/>
+            <Wpf:DistanceEdit x:Name="offRock"/>
+        </StackPanel>
+    </Expander>
+    <CheckBox x:Name="showResultCB" Content="Show the result: hide the source region, colour each type" IsChecked="True" Margin="0,4,0,0"/>
+    <ProgressBar x:Name="progressBar" Minimum="0" Maximum="100" Value="0" Height="16" Margin="0,8,0,0"/>
+    <Label x:Name="progressStatus" Content="Ready" Padding="0"/>
+    <TextBlock TextWrapping="Wrap" Margin="5,4,5,4"
+        Text="The first click reads the region (it takes a while on big regions). OK writes '- anchors', '- hoses', '- junk' and '- rest' regions; the selected region is not changed."/>
+    <TextBox x:Name="resultText" IsReadOnly="True" TextWrapping="NoWrap" MinHeight="160" MaxHeight="420"
+             VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" FontFamily="Consolas"/>
+</StackPanel>

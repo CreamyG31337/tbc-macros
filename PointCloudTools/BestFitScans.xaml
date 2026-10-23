@@ -1,0 +1,38 @@
+<StackPanel HorizontalAlignment="Stretch"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:Wpf="clr-namespace:Trimble.Vce.UI.Controls.Wpf;assembly=Trimble.Vce.UI.Controls">
+        <Label Content="Select regions in the TBC view, then capture them:"/>
+        <Wpf:MemberSelection x:Name="regionPicker"/>
+        <Button x:Name="setReferenceBtn" Content="Set current selection as Reference (stay put)"
+            Click="SetReferenceClicked" Margin="0,4,0,0"/>
+        <Label x:Name="referenceStatus" Content="Reference: none"/>
+        <Button x:Name="setMovingBtn" Content="Set current selection as Moving (its whole scans shift)"
+            Click="SetMovingClicked" Margin="0,4,0,0"/>
+        <Label x:Name="movingStatus" Content="Moving: none"/>
+        <TextBlock TextWrapping="Wrap" Margin="5,0,5,4"
+            Text="Regions only pick the scans. OK moves every scan that has points in a Moving region: all of its points, in every region that uses it."/>
+    <Label Content="Largest offset to search for:"/>
+    <Wpf:DistanceEdit x:Name="searchDist"/>
+    <Label Content="Apply shift with:"/>
+    <ComboBox x:Name="methodCombo" SelectedIndex="1">
+        <ComboBoxItem Content="Scan.Transform (translation matrix)"/>
+        <ComboBoxItem Content="Scan.ApplyTransformation (new scan pose)"/>
+    </ComboBox>
+    <CheckBox x:Name="verifyCB" Content="Verify points moved before committing" IsChecked="True" Margin="0,4,0,0"/>
+    <ProgressBar x:Name="progressBar" Minimum="0" Maximum="100" Value="0" Height="16" Margin="0,8,0,0"/>
+    <Label x:Name="progressStatus" Content="Ready" Padding="0"/>
+    <Button x:Name="computeBtn" Content="Compute fit" Click="ComputeClicked" Margin="0,8,0,4"/>
+    <Label Content="Or shift the whole Moving scans vertically by a set amount:"/>
+    <Wpf:DistanceEdit x:Name="manualDist"/>
+    <Grid Margin="0,4,0,4">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+        <Button x:Name="manualUpBtn" Grid.Column="0" Content="Set shift Up" Click="ManualUpClicked" Margin="0,0,2,0"/>
+        <Button x:Name="manualDownBtn" Grid.Column="1" Content="Set shift Down" Click="ManualDownClicked" Margin="2,0,0,0"/>
+    </Grid>
+    <TextBox x:Name="resultText" IsReadOnly="True" TextWrapping="NoWrap" MinHeight="160" MaxHeight="420"
+             VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" FontFamily="Consolas"/>
+</StackPanel>

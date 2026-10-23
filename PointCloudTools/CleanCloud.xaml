@@ -1,0 +1,27 @@
+<StackPanel HorizontalAlignment="Stretch"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:Wpf="clr-namespace:Trimble.Vce.UI.Controls.Wpf;assembly=Trimble.Vce.UI.Controls">
+    <Label Content="Point cloud regions to clean:"/>
+    <Wpf:MemberSelection x:Name="regionPicker"/>
+    <CheckBox x:Name="autoCB" Content="Pick cell size and tolerance from the scan (recommended)" IsChecked="True"
+        Click="AutoChanged" Margin="0,4,0,0"/>
+    <Label Content="Cell size (planes are fitted over 3 x 3 x 3 cells):"/>
+    <Wpf:DistanceEdit x:Name="cellSize"/>
+    <Label Content="Keep points within this distance of the local surface:"/>
+    <Wpf:DistanceEdit x:Name="tolerance"/>
+    <CheckBox x:Name="removeSmallCB" Content="Remove small floating pieces (clumps of noise not attached to the surface)" IsChecked="True" Margin="0,4,0,0"/>
+    <CheckBox x:Name="flattenCB" Content="Move kept points onto the local surface (smooths)" IsChecked="False" Margin="0,4,0,0"/>
+    <CheckBox x:Name="keepRoughCB" Content="Keep points where the surface isn't flat (corners, edges, vegetation)" IsChecked="True" Margin="0,4,0,0"/>
+    <CheckBox x:Name="dropIsolatedCB" Content="Remove isolated points (under 10 points in the surrounding cells)" IsChecked="True" Margin="0,4,0,0"/>
+    <CheckBox x:Name="writeRemovedCB" Content="Also write the removed points to a '- removed' region (to check what was taken)" IsChecked="True" Margin="0,4,0,0"/>
+    <CheckBox x:Name="showResultCB" Content="Show the result: hide the source regions, cleaned in true colour, removed in red" IsChecked="True" Margin="0,4,0,0"/>
+    <CheckBox x:Name="verifyCB" Content="Check the new scan before committing" IsChecked="True" Margin="0,4,0,0"/>
+    <ProgressBar x:Name="progressBar" Minimum="0" Maximum="100" Value="0" Height="16" Margin="0,8,0,0"/>
+    <Label x:Name="progressStatus" Content="Ready" Padding="0"/>
+    <Button x:Name="previewBtn" Content="Preview (no changes)" Click="PreviewClicked" Margin="0,8,0,4"/>
+    <TextBlock TextWrapping="Wrap" Margin="5,0,5,4"
+        Text="OK writes the kept points to a new '- cleaned' region and scan (and the removed points to '- removed' if ticked). The selected regions and their scans are not changed."/>
+    <TextBox x:Name="resultText" IsReadOnly="True" TextWrapping="NoWrap" MinHeight="160" MaxHeight="420"
+             VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" FontFamily="Consolas"/>
+</StackPanel>

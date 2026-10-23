@@ -1,0 +1,10 @@
+<StackPanel HorizontalAlignment="Stretch"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:Wpf="clr-namespace:Trimble.Vce.UI.Controls.Wpf;assembly=Trimble.Vce.UI.Controls">
+    <Label Content="Point cloud regions:"/>
+    <Wpf:MemberSelection x:Name="regions"/>
+    <Label Content="Results (OK runs it; writes ScanInfo.csv to the export folder):"/>
+    <TextBox x:Name="resultText" IsReadOnly="True" TextWrapping="NoWrap" MinHeight="120" MaxHeight="400"
+             VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" FontFamily="Consolas"/>
+</StackPanel>
