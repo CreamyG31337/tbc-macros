@@ -11,7 +11,7 @@ transaction and checks its own work, but always try them on a copy of a project 
 |---|---|
 | **Scan Info** (`ScanInfo.py`) | Read-only. Lists the selected point cloud regions and their scans (point counts, scan positions, adjusted or not) and writes sampled points to `ScanInfo.csv` in the TBC export folder. |
 | **Best-Fit Scans** (`BestFitScans.py`) | Fits "moving" regions onto "reference" regions with a point-to-plane, translation-only fit on the surfaces both contain, then shifts the moving regions' scans. Can also apply a typed vertical shift. Committed only if the points moved by the computed amount. |
-| **Clean Point Cloud 3D** (`CleanCloud.py`) | Removes noise by comparing each point with a plane fitted to its neighbourhood, and removes small floating pieces that aren't on the surface. Cell size and tolerance are picked from the measured point spacing and noise. Writes "- cleaned" and "- removed" regions; refuses runs that would remove over 20%. |
+| **Clean Point Cloud 3D** (`CleanCloud.py`) | Removes noise by comparing each point with a plane fitted to its neighbourhood, and removes small floating pieces that aren't on the surface. Cell size and tolerance are picked from the measured point spacing and noise. Can also smooth the kept points onto curved local surfaces. Writes "- cleaned" and "- removed" regions; refuses runs that would remove over 20%. |
 | **Separate Objects** (`SeparateObjects.py`) | Click anchors / dowels and junk (one click each) or hoses / cables (clicks along them). Each object is the points standing off the rock right around it, connected to the click. Writes "- anchors", "- hoses", "- junk" and "- rest" regions. |
 
 None of the macros change the selected regions or their scans except Best-Fit Scans, which moves
@@ -49,6 +49,10 @@ To update, close TBC, copy the changed `.py` / `.xaml` files over and restart. T
   select the rock region and press Preview: the report gives the settings picked and what each
   test would remove. OK writes the "- cleaned" and "- removed" regions, hides the source and
   colours the result (cleaned in true colour, removed in red) so it can be checked at a glance.
+  Tick **Smooth** to also pull the remaining fuzz onto the surface. It keeps the rock's shape
+  much better than flat planes would, but it is slow (about 75 s per million points on top of
+  the clean) and moves points: typically a few mm, up to several cm in very noisy areas. Check
+  sharp edges after using it.
 - **Separate Objects:** select the rock region, pick the object type, turn on snapping to point
   clouds and click the object (the first click reads the region). For a hose, click along it
   every metre or so, then Finish hose. Each pick reports its point count; Undo last removes it.
@@ -73,7 +77,27 @@ rolled back.
 - TBC Macros and Extensions community: <https://community.trimble.com/communities/publiccommunity?CommunityKey=8a262af4-a35e-4e9a-9dd3-191cc785899a>
 - TbcMacroKit, a C# + Python shim framework with Visual Studio debugging: <https://github.com/dmbrubac/TbcMacroKit>
 - SCR Macros, a large public IronPython macro collection: <https://github.com/RonnySchneider/SCR_Macros_Public>
-- The noise test follows the idea of CloudCompare's Noise filter: <https://www.cloudcompare.org>
+
+## Credits
+
+The code here is written from scratch for TBC's IronPython (no third-party code is copied or
+bundled), but several of the methods are based on other people's work:
+
+- **Clean Point Cloud 3D, the plane test:** based on the Noise filter in
+  [CloudCompare](https://www.cloudcompare.org) (`CloudSamplingTools::noiseFilter` in CCCoreLib):
+  fit a plane to each point's neighbours and drop points too far from it. This version uses grid
+  cells at several sizes instead of per-point neighbourhoods, and picks the tolerance from the
+  measured noise.
+- **Clean Point Cloud 3D, smoothing:** based on moving least-squares (MLS) smoothing as in
+  the [Point Cloud Library](https://pointclouds.org)'s `MovingLeastSquares`, which CloudCompare
+  offers through its PCL plugin: move each point onto a quadratic surface fitted to its
+  neighbourhood. This version fits the surfaces in overlapping grid blocks and blends them,
+  which is cheaper in pure Python, and uses larger blocks where the noise is high.
+- **Clean Point Cloud 3D, floating pieces:** grouping points into connected pieces on a grid is
+  the same idea as CloudCompare's "Label Connected Components".
+- **Best-Fit Scans:** a translation-only form of point-to-plane ICP (Chen and Medioni, 1992).
+
+Thanks to the CloudCompare and PCL developers for publishing their work as open source.
 
 ## Licence
 
