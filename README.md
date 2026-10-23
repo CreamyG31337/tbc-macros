@@ -54,7 +54,9 @@ To update, close TBC, copy the changed `.py` / `.xaml` files over and restart. T
   Tick **Smooth** to also pull the remaining fuzz onto the surface. It keeps the rock's shape
   much better than flat planes would, but it is slow (about 75 s per million points on top of
   the clean) and moves points: typically a few mm, up to several cm in very noisy areas. Check
-  sharp edges after using it.
+  sharp edges after using it. The selected regions are never changed (only hidden); to compare
+  smoothed and unsmoothed, tick the option that also writes a hidden "- cleaned, not smoothed"
+  region.
 - **Separate Objects:** select the rock region, pick the object type, turn on snapping to point
   clouds and click the object (the first click reads the region). For a hose, click along it
   every metre or so, then Finish hose. Each pick reports its point count; Undo last removes it.

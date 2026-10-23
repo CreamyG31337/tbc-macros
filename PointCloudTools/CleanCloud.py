@@ -825,7 +825,19 @@ class CleanCloud(StackPanel):  # TBC hosts this panel because cmdData.UIForm nam
                     c = pi.Coordinates
                     removed.Add(pi)
                     removed_expected.append((c.X - ox, c.Y - oy, c.Z - oz))
-        split = 75.0 if removed_expected else 100.0
+        unsmoothed, unsmoothed_expected = List[PointInfo](), []
+        if settings[3] and self.writeUnsmoothedCB.IsChecked:  # the kept points where they were
+            for i, _ in out:
+                c = infos[i].Coordinates
+                unsmoothed.Add(infos[i])
+                unsmoothed_expected.append((c.X - ox, c.Y - oy, c.Z - oz))
+        # progress from 15 to 100 is shared out by the number of points in each new region
+        jobs = [(" - cleaned", points, expected)]
+        if unsmoothed_expected:
+            jobs.append((" - cleaned, not smoothed", unsmoothed, unsmoothed_expected))
+        if removed_expected:
+            jobs.append((" - removed", removed, removed_expected))
+        n_all = float(sum(len(e) for _, _, e in jobs))
         base = region_name(regions[0])
         committed = False
         manager = self.currentProject.TransactionManager
@@ -834,18 +846,20 @@ class CleanCloud(StackPanel):  # TBC hosts this panel because cmdData.UIForm nam
             # changes made inside the "with" block are rolled back unless Commit() is called,
             # including when Cancel raises Cancelled out of a progress update
             with TransactMethodCall(self.currentProject.TransactionCollector) as failGuard:
-                ok, cleaned_region = self.write_scan(base + " - cleaned", points, expected, origin, 15.0, split)
-                removed_region = None
-                if removed_expected and (ok or not self.verifyCB.IsChecked):
-                    ok2, removed_region = self.write_scan(base + " - removed", removed, removed_expected, origin,
-                                                          split, 100.0)
-                    ok = ok and ok2
+                ok, written, lo = True, {}, 15.0
+                for suffix, pts_out, exp in jobs:
+                    hi = lo + 85.0 * len(exp) / n_all
+                    if ok or not self.verifyCB.IsChecked:
+                        good, written[suffix] = self.write_scan(base + suffix, pts_out, exp, origin, lo, hi)
+                        ok = ok and good
+                    lo = hi
                 if self.verifyCB.IsChecked and not ok:
                     self.log("A new scan doesn't match the points written; rolled back. If a new region is still "
                              "listed, delete it, and send this report.")
                     return
                 if self.showResultCB.IsChecked:
-                    self.show_result(regions, cleaned_region, removed_region)
+                    self.show_result(regions, written.get(" - cleaned"), written.get(" - removed"),
+                                     written.get(" - cleaned, not smoothed"))
                 failGuard.Commit()
                 committed = True
         finally:
@@ -855,15 +869,19 @@ class CleanCloud(StackPanel):  # TBC hosts this panel because cmdData.UIForm nam
             self.log("Written. Hide the source regions to compare; use Undo to remove the new regions.")
             self.result = None
 
-    def show_result(self, sources, cleaned, removed):
-        """Inside the caller's transaction: hide the source regions in the view filters, show the
-        cleaned region in true colour and the removed region in red. Each step is cosmetic, so a
-        failure is reported and the rest carries on."""
+    def show_result(self, sources, cleaned, removed, unsmoothed=None):
+        """Inside the caller's transaction: hide the source regions (and the unsmoothed copy, which
+        lies on top of the cleaned one) in the view filters, show the cleaned region in true colour
+        and the removed region in red. Each step is cosmetic, so a failure is reported and the rest
+        carries on."""
         project = self.currentProject
-        try:
-            cleaned.ColorMode = ColorMode.PointRGB
-        except Exception as ex:
-            self.log(f"  could not set true colour on the cleaned region: {ex}")
+        for region in (cleaned, unsmoothed):
+            if region is None:
+                continue
+            try:
+                region.ColorMode = ColorMode.PointRGB
+            except Exception as ex:
+                self.log(f"  could not set true colour on '{region.Name}': {ex}")
         if removed is not None:
             # the region's Color type isn't documented: try the two colour types TBC uses
             reds = [MediaColor.FromRgb(220, 30, 30)]
@@ -885,7 +903,7 @@ class CleanCloud(StackPanel):  # TBC hosts this panel because cmdData.UIForm nam
         try:
             types = project.GetMemberContainer(MandatoryContainers.ImitationTypeCollection)
             serial = lambda region: types.Lookup(region.ImitationTypeGuid).SerialNumber
-            hide = [serial(r) for r in sources]
+            hide = [serial(r) for r in list(sources) + ([unsmoothed] if unsmoothed is not None else [])]
             show = [serial(r) for r in (cleaned, removed) if r is not None]
             filters = self.view_filters()
             changed = []
@@ -901,7 +919,8 @@ class CleanCloud(StackPanel):  # TBC hosts this panel because cmdData.UIForm nam
                 except Exception:
                     pass  # only the concrete ViewFilter has it; TBC refreshes on commit anyway
                 changed.append(str(f.Name))
-            self.log("  view filters updated (source regions hidden): " + (", ".join(changed) or "none writable"))
+            self.log("  view filters updated (source regions" + (" and the unsmoothed copy" if unsmoothed is not None else "")
+                     + " hidden): " + (", ".join(changed) or "none writable"))
         except Exception as ex:
             self.log(f"  could not update the view filters: {ex}")
 
