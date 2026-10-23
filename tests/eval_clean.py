@@ -1,5 +1,6 @@
 """Run the macro's filter exactly as run_filter() will in automatic mode, on several clouds.
-Usage (MACRO = macro name, e.g. CleanCloud, or path): eval_v3.py MACRO LAZ[@inject] [...]   (@inject adds known flyers and clumps, as inject_test.py)"""
+Usage (MACRO = macro name, e.g. CleanCloud, or path): eval_clean.py MACRO [--opt[=value] ...] LAZ[@inject] [...]
+(@inject adds known flyers and clumps; --opt passes _opt=True or =value to clean(), for trying variants)"""
 import math
 import random
 import os
@@ -21,7 +22,8 @@ def auto_settings(rel):
 
 variant = {}
 while sys.argv[2].startswith("--"):
-    variant["_" + sys.argv.pop(2)[2:].replace("-", "_")] = True
+    name, _, value = sys.argv.pop(2)[2:].partition("=")
+    variant["_" + name.replace("-", "_")] = float(value) if value else True
 print("variant:", variant or "default")
 for spec in sys.argv[2:]:
     path, inject = (spec[:-7], True) if spec.endswith("@inject") else (spec, False)

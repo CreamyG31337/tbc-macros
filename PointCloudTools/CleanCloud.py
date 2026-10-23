@@ -51,6 +51,7 @@ LARGE_POINTS = 3000000  # needs roughly 0.5 GB per million points; above LARGE_P
 MIN_NEIGHBOURS = 10     # points needed in the 3 x 3 x 3 cells to fit a plane
 FLAT_RATIO = 0.1        # smallest / middle eigenvalue below this counts as a flat surface
 MIN_PIECE = 30          # floating pieces with fewer points than this are removed as noise
+THICK_K = 3.0           # ... unless within THICK_K x the thickness (RMS) of the surface around them
 LEVELS = 3              # plane fits at cell, 2 x cell, 4 x cell; sparse areas use the coarser ones
 # automatic settings, from tests on NavVis VLX3, Trimble SX12 and drone photogrammetry clouds (docs/testing.md):
 AUTO_CELL = 3.0         # cell = 3 x the median point spacing (about 25-30 points per plane)
@@ -114,49 +115,77 @@ def cell_key(p, cell):
     return (int(math.floor(p[0] / cell)), int(math.floor(p[1] / cell)), int(math.floor(p[2] / cell)))
 
 
-def local_planes(pts, cell, tick=None, use=None):
-    """A plane (centre, normal, flat) per occupied cell, keyed by cell_key(p, cell), fitted to the
-    points in the surrounding 3 x 3 x 3 cells. Uses per-cell sums so the cost is linear.
-    use: optional bytearray; points with use[i] == 0 are left out of the fits.
-    tick(fraction) gets progress from 0 to 1."""
+def cell_sums(pts, cell, tick=None, use=None, index=None):
+    """Point count and coordinate sums per cell, keyed by cell_key(p, cell). use: optional
+    bytearray; points with use[i] == 0 are left out. index: optional list of the points to sum
+    (instead of all). tick(fraction) gets progress from 0 to 1."""
     sums = {}
     n_pts = float(len(pts))
-    for j, (x, y, z) in enumerate(pts):
+    for j in (index if index is not None else range(len(pts))):
         if tick and j % 10000 == 0:
-            tick(0.4 * j / n_pts)
+            tick(j / n_pts)
         if use is not None and not use[j]:
             continue
+        x, y, z = pts[j]
         k = (int(math.floor(x / cell)), int(math.floor(y / cell)), int(math.floor(z / cell)))
         s = sums.get(k)
         if s is None:
             s = sums[k] = [0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
         s[0] += 1; s[1] += x; s[2] += y; s[3] += z
         s[4] += x * x; s[5] += y * y; s[6] += z * z; s[7] += x * y; s[8] += x * z; s[9] += y * z
+    return sums
+
+
+def fit_plane(sums, k, minus=None):
+    """Plane (centre, normal, flat, thickness) through the points in the 3 x 3 x 3 cells around
+    cell k, leaving out the points summed in minus, or None if there are too few. thickness is the
+    RMS distance of those points from the plane."""
+    t = [0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    for a, b, d in NEIGHBOURS:
+        q = (k[0] + a, k[1] + b, k[2] + d)
+        s = sums.get(q)
+        if s:
+            for i in range(10):
+                t[i] += s[i]
+            if minus:
+                s = minus.get(q)
+                if s:
+                    for i in range(10):
+                        t[i] -= s[i]
+    n = t[0]
+    if n < MIN_NEIGHBOURS:
+        return None
+    mx, my, mz = t[1] / n, t[2] / n, t[3] / n
+    cov = (t[4] / n - mx * mx, t[5] / n - my * my, t[6] / n - mz * mz,
+           t[7] / n - mx * my, t[8] / n - mx * mz, t[9] / n - my * mz)
+    (l1, l2, l3), nv = sym3_eig(cov)
+    return ((mx, my, mz), nv, l2 > 0 and l3 <= FLAT_RATIO * l2, math.sqrt(max(0.0, l3)))
+
+
+def planes_from_sums(sums, tick=None):
     planes = {}
     n_cells = float(len(sums))
     for j, k in enumerate(sums):
         if tick and j % 2000 == 0:
-            tick(0.4 + 0.6 * j / n_cells)
-        t = [0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-        for a, b, d in NEIGHBOURS:
-            s = sums.get((k[0] + a, k[1] + b, k[2] + d))
-            if s:
-                for i in range(10):
-                    t[i] += s[i]
-        n = t[0]
-        if n < MIN_NEIGHBOURS:
-            continue
-        mx, my, mz = t[1] / n, t[2] / n, t[3] / n
-        cov = (t[4] / n - mx * mx, t[5] / n - my * my, t[6] / n - mz * mz,
-               t[7] / n - mx * my, t[8] / n - mx * mz, t[9] / n - my * mz)
-        (l1, l2, l3), nv = sym3_eig(cov)
-        planes[k] = ((mx, my, mz), nv, l2 > 0 and l3 <= FLAT_RATIO * l2)
+            tick(j / n_cells)
+        pl = fit_plane(sums, k)
+        if pl is not None:
+            planes[k] = pl
     return planes
+
+
+def local_planes(pts, cell, tick=None, use=None):
+    """A plane (centre, normal, flat, thickness) per occupied cell, keyed by cell_key(p, cell),
+    fitted to the points in the surrounding 3 x 3 x 3 cells. Uses per-cell sums so the cost is
+    linear. use: optional bytearray; points with use[i] == 0 are left out of the fits.
+    tick(fraction) gets progress from 0 to 1."""
+    sums = cell_sums(pts, cell, (lambda f: tick(0.4 * f)) if tick else None, use)
+    return planes_from_sums(sums, (lambda f: tick(0.4 + 0.6 * f)) if tick else None)
 
 
 def off_plane(p, pl):
     """Signed distance from p to the plane pl."""
-    c, nv, _ = pl
+    c, nv = pl[0], pl[1]
     return nv[0] * (p[0] - c[0]) + nv[1] * (p[1] - c[1]) + nv[2] * (p[2] - c[2])
 
 
@@ -251,8 +280,10 @@ def clean(pts, cell, tol, flatten, keep_rough, drop_isolated, tick=None, gap=0.0
     tolerance at the finest level (None: AUTO_TOL x the measured scatter); coarser levels scale it
     by how much the scatter grows, since a larger plane follows real relief less closely.
     gap, min_piece: pieces of fewer than min_piece points separated from everything else by more
-    than about 2 x gap are left out of the finest plane fit, and dropped unless they lie within the
-    finest tolerance of a flat plane (a sparse patch of real surface, rather than a floating clump).
+    than about 2 x gap are left out of the finest plane fit, and dropped unless they lie on the
+    surface around them (a sparse patch of real surface, rather than a floating clump): within the
+    finest tolerance of a flat finest plane, or where there is none, within THICK_K x the
+    thickness of a coarser one fitted without the small pieces.
     tick(fraction) is called now and then with progress from 0 to 1."""
     stages = levels + 0.5 + (1 if min_piece > 0 else 0)
     done = [0]
@@ -264,14 +295,21 @@ def clean(pts, cell, tol, flatten, keep_rough, drop_isolated, tick=None, gap=0.0
 
     small = small_pieces(pts, gap, min_piece, sub()) if min_piece > 0 else None
     use = bytearray(0 if s else 1 for s in small) if small is not None else None
+    small_index = [i for i in range(len(pts)) if small[i]] if small is not None else []
     fits = []
+    surface = []  # per level: (cell, sums of all points, sums of small pieces, planes without them)
     for level in range(levels):
         c = cell * 2 ** level
         # small pieces are left out of the finest fit only: coarser planes need them where a sparse
         # area is made entirely of small pieces, or it has no plane to show it is real surface
         u = None if level else use
-        planes = local_planes(pts, c, sub(), u)
+        tk = sub()
+        sums = cell_sums(pts, c, (lambda f: tk(0.4 * f)) if tk else None, u)
+        planes = planes_from_sums(sums, (lambda f: tk(0.4 + 0.6 * f)) if tk else None)
         fits.append((c, planes, scatter(pts, planes, c, u)))
+        if small_index:
+            # the surface without the small pieces, fitted only where one is asked for
+            surface.append((c, sums, cell_sums(pts, c, index=small_index) if level else None, {} if level else planes))
     s0 = next((f[2] for f in fits if f[2]), None)
     if tol is None:
         if not s0:
@@ -296,8 +334,24 @@ def clean(pts, cell, tol, flatten, keep_rough, drop_isolated, tick=None, gap=0.0
         if pl is not None and level:
             counts["judged at level %d" % level] += 1
         if small is not None and small[i]:
-            # judged with the finest tolerance: coarse planes' tolerances would let clumps through
-            if pl is None or not pl[2] or abs(off_plane(p, pl)) > tol:
+            # kept if on the surface around it, fitted without the small pieces so a clump can't
+            # pull it. Close to dense surface (a finest plane): flat and within the tolerance. Where
+            # the scan is sparse, a thick band of real surface breaks into small pieces and dropping
+            # them opens holes, so there: within THICK_K x the coarser surface's thickness
+            sp, slev = None, 0
+            for slev, (c, sums, minus, cache) in enumerate(surface):
+                k = cell_key(p, c)
+                if k in cache:
+                    sp = cache[k]
+                elif minus is not None:
+                    sp = cache[k] = fit_plane(sums, k, minus)
+                if sp is not None:
+                    break
+            if sp is None:  # nothing but small pieces nearby: only a flat patch within the tolerance counts
+                sp, slev = pl, 0
+            on = sp is not None and abs(off_plane(p, sp)) <= (max(tol, THICK_K * sp[3]) if slev else tol) \
+                and (slev > 0 or sp[2])
+            if not on:
                 counts["small piece"] += 1
                 continue
             counts["small piece on surface"] += 1
@@ -523,7 +577,11 @@ class CleanCloud(StackPanel):  # TBC hosts this panel because cmdData.UIForm nam
                      "this cloud: try automatic settings, or a larger cell / tolerance.")
             return None
         if counts["rough kept"] > 0.3 * n:
-            self.log("Many points are in areas that aren't flat at this cell size: try a smaller cell.")
+            if auto:  # the automatic cell is already as small as the point spacing allows
+                self.log("Many points are in areas that aren't flat at this cell size (rough rock or a thick "
+                         "cloud); they are kept as they are.")
+            else:
+                self.log("Many points are in areas that aren't flat at this cell size: try a smaller cell.")
         self.result = (settings, regions, infos, origin, out)
         return self.result
 

@@ -1,7 +1,8 @@
 """Run the macro's filter (automatic settings, as run_filter() does) on labelled files combined, and
 report what share of each label it removes, why, and where. Also writes a face image of the
 removed 'keep' points (red) and caught 'remove' points (blue).
-Usage (MACRO = macro name, e.g. CleanCloud, or path): eval_labelled.py MACRO OUT_PREFIX LABEL=PATH [LABEL=PATH ...]"""
+Usage (MACRO = macro name, e.g. CleanCloud, or path): eval_labelled.py MACRO OUT_PREFIX LABEL=PATH [LABEL=PATH ...]
+[--opt[=value] ...]  (passes _opt=True or =value to clean(), for trying variants)"""
 import math
 import struct
 import os
@@ -13,6 +14,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import lasread as las_io  # noqa: E402
 import macrocode  # noqa: E402
 
+variant = {}
+for a in [a for a in sys.argv if a.startswith("--")]:
+    sys.argv.remove(a)
+    name, _, value = a[2:].partition("=")
+    variant["_" + name.replace("-", "_")] = float(value) if value else True
 ns = macrocode.load(sys.argv[1])
 prefix = sys.argv[2]
 pts, label = [], []
@@ -28,7 +34,7 @@ t0 = time.time()
 s50, s95 = ns["point_spacing"](rel)
 cell = min(ns["MAX_CELL"], max(ns["MIN_CELL"], round(ns["AUTO_CELL"] * s50 / 0.005) * 0.005))
 gap = max(1.2 * s50, s95)
-out, counts, info = ns["clean"](rel, cell, None, False, True, True, None, gap, ns["MIN_PIECE"])
+out, counts, info = ns["clean"](rel, cell, None, False, True, True, None, gap, ns["MIN_PIECE"], **variant)
 kept = bytearray(N)
 for i, _ in out:
     kept[i] = 1

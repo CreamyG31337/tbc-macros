@@ -16,8 +16,10 @@ Test data used (all of rock walls and trenches):
 ### How it decides
 
 1. **Floating pieces.** Points are linked if within about 2 x a gap; pieces under 30 points are
-   left out of the finest plane fit and removed unless they lie on a flat surface within
-   tolerance. Gap = max(1.2 x median spacing, 95th-percentile spacing).
+   left out of the finest plane fit and removed unless they lie on the surface: near dense
+   surface, on a flat finest plane within tolerance; where only coarser planes reach (sparse
+   areas), within 3 x the RMS thickness of a coarser plane fitted without the small pieces.
+   Gap = max(1.2 x median spacing, 95th-percentile spacing).
 2. **Local planes.** Planes are fitted to the 3 x 3 x 3 cells around each cell, at the cell size
    and at 2 x and 4 x; each point is judged at the finest level with enough points (10) around
    it. Areas that aren't flat (smallest / middle eigenvalue > 0.1) are kept as they are; on flat
@@ -48,6 +50,15 @@ Test data used (all of rock walls and trenches):
   (strays the manual clean missed); of the floating pieces, about half were slivers along the
   region's cut edges and ~0.06% of the rock was real surface lost. 7.3% of the debris was caught;
   anchors were mostly kept.
+- **Sparse, thick areas lost surface as "floating pieces".** A NavVis wall section the scanner
+  couldn't get close to (a puddle in front) was sparse and ~10 cm thick, and the clean widened its
+  gaps: viewed face-on, 1.8% of the 5 cm cells that had points were emptied, almost all by the
+  floating-piece test (cross-sections showed the pieces inside the band, not in front of it).
+  Keeping small pieces that are within 3 x the thickness of a coarser surface fitted without
+  them cut that to 0.54% with the same share of injected flyers (87%) and clumps (28%) caught.
+  Applying the thickness test near dense surface too, or measuring thickness with the small
+  pieces included (clumps widen it), let 3-11% more injected noise through. On the other test
+  scans the change kept within 1-3% of the injected noise caught before.
 - **Tried and dropped:** refitting planes without outliers (little gain, slower), a local density
   test (no gain on real data), keeping small pieces in rough areas (lost more noise than it
   saved rock).
