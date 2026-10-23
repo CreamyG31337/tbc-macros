@@ -10,12 +10,14 @@ transaction and checks its own work, but always try them on a copy of a project 
 | Macro | What it does |
 |---|---|
 | **Scan Info** (`ScanInfo.py`) | Read-only. Lists the selected point cloud regions and their scans (point counts, scan positions, adjusted or not) and writes sampled points to `ScanInfo.csv` in the TBC export folder. |
-| **Best-Fit Scans** (`BestFitScans.py`) | Fits "moving" regions onto "reference" regions with a point-to-plane, translation-only fit on the surfaces both contain, then shifts the moving regions' scans. Can also apply a typed vertical shift. Committed only if the points moved by the computed amount. |
+| **Best-Fit Scans** (`BestFitScans.py`) | Fits "moving" regions onto "reference" regions with a point-to-plane, translation-only fit on the surfaces both contain, then shifts the moving regions' scans. Can also apply a typed vertical shift. By default first copies the moving regions, unmoved, into hidden "- before shift" regions. Committed only if the copies read back and the points moved by the computed amount. |
 | **Clean Point Cloud 3D** (`CleanCloud.py`) | Removes noise by comparing each point with a plane fitted to its neighbourhood, and removes small floating pieces that aren't on the surface. Cell size and tolerance are picked from the measured point spacing and noise. Can also smooth the kept points onto curved local surfaces. Writes "- cleaned" and "- removed" regions; refuses runs that would remove over 20%. |
 | **Separate Objects** (`SeparateObjects.py`) | Click anchors / dowels and junk (one click each) or hoses / cables (clicks along them). Each object is the points standing off the rock right around it, connected to the click. Writes "- anchors", "- hoses", "- junk" and "- rest" regions. |
 
 None of the macros change the selected regions or their scans except Best-Fit Scans, which moves
-the scans behind the moving regions (in every region that uses them).
+the scans behind the moving regions (in every region that uses them). Its "- before shift"
+copies cover the selected moving regions only, not other regions that share those scans; they
+are written in the same undo step as the shift, so Undo removes them too.
 
 ## Requirements
 

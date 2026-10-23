@@ -19,6 +19,7 @@
         <ComboBoxItem Content="Scan.Transform (translation matrix)"/>
         <ComboBoxItem Content="Scan.ApplyTransformation (new scan pose)"/>
     </ComboBox>
+    <CheckBox x:Name="backupCB" Content="Keep a copy of the Moving regions before the shift ('- before shift' regions, hidden)" IsChecked="True" Margin="0,4,0,0"/>
     <CheckBox x:Name="verifyCB" Content="Verify points moved before committing" IsChecked="True" Margin="0,4,0,0"/>
     <ProgressBar x:Name="progressBar" Minimum="0" Maximum="100" Value="0" Height="16" Margin="0,8,0,0"/>
     <Label x:Name="progressStatus" Content="Ready" Padding="0"/>

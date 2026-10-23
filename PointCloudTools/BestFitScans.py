@@ -7,6 +7,9 @@ the moving regions by the result. The shift runs inside one transaction: the poi
 re-read and the change is committed only if they moved by the computed amount; otherwise
 it is rolled back and the project is unchanged. Undo also reverses a committed shift.
 A typed vertical shift (up or down) can be applied instead of the fit, the same way.
+Optionally (on by default) the moving regions' points are first copied, as they are, into new
+"- before shift" regions with scans of their own, in the same transaction, so the old position
+stays available after the shift.
 
 The fit is the same method as bestfit_clouds.py in the check-georef repository.
 """
@@ -19,19 +22,22 @@ clr.AddReference("IronPython.Wpf")
 import wpf
 
 from System import Action, Int32
+from System.Collections.Generic import List
 from System.IO import StreamReader, Path
 from System.Windows.Controls import StackPanel
 from System.Windows.Threading import DispatcherPriority
 
 from Trimble.Vce.Core import TransactMethodCall
-from Trimble.Vce.Interfaces.Client import CommandGranularity
+from Trimble.Vce.Interfaces.Client import CommandGranularity, MandatoryContainers
 from Trimble.Vce.Geometry import Matrix4D, Spinor3D, Vector3D
 clr.AddReference("Trimble.Vce.UI.Controls")
-try:
-    clr.AddReference("Trimble.Sdk.Scanning")
-except Exception:
-    pass  # already loaded by TBC under another name
-from Trimble.Vce.Data.Scanning import PointCloudRegion
+for name in ("Trimble.Sdk.Scanning", "Trimble.Sdk.Interfaces"):
+    try:
+        clr.AddReference(name)
+    except Exception:
+        pass  # already loaded by TBC under another name
+from Trimble.Vce.Data.Scanning import PointCloudRegion, PointCloudDatabaseContainer, ExposedPointCloudRegionContainer
+from Trimble.Vce.Interfaces.PointCloudIntegration import PointInfo
 
 REFERENCE_MAX_POINTS = 1000000  # cap on points read from the reference regions
 MOVING_MAX_POINTS = 200000      # cap on points read from the moving regions
@@ -293,6 +299,7 @@ class BestFitScans(StackPanel):  # TBC hosts this panel because cmdData.UIForm n
         self.busy = False
         self.cancel_requested = False
         self.last_pump = 0.0
+        self.import_range = (0.0, 100.0)
 
     def OnLoad(self, cmd, buttons, event):
         self.Caption = cmd.Command.Caption
@@ -456,7 +463,9 @@ class BestFitScans(StackPanel):  # TBC hosts this panel because cmdData.UIForm n
         method_name = "Scan.Transform" if self.methodCombo.SelectedIndex == 0 else "Scan.ApplyTransformation"
         self.log("Applying with " + method_name + ".")
         self.log("Moving scans: " + ", ".join(str(getattr(s, "Name", "(unnamed scan)")) for s in scans.values()))
-        before = centroid(region_points(mov, VERIFY_POINTS, lambda f: self.progress(40 * f, "Reading points before the shift")))
+        backup = bool(self.backupCB.IsChecked)
+        read_to = 15.0 if backup else 40.0
+        before = centroid(region_points(mov, VERIFY_POINTS, lambda f: self.progress(read_to * f, "Reading points before the shift")))
         committed = False
         manager = self.currentProject.TransactionManager
         manager.AddBeginMark(CommandGranularity.Command, "Best-Fit Scans")
@@ -464,6 +473,10 @@ class BestFitScans(StackPanel):  # TBC hosts this panel because cmdData.UIForm n
             # changes made inside the "with" block are rolled back unless Commit() is called,
             # including when Cancel raises Cancelled out of a progress update
             with TransactMethodCall(self.currentProject.TransactionCollector) as failGuard:
+                if backup and not self.backup_regions(mov, read_to, 40.0):
+                    self.log("The copy before the shift didn't read back as written; nothing was changed. "
+                             "Untick the copy to shift without it.")
+                    return
                 self.progress(40, "Moving scans")
                 for scan in scans.values():
                     if self.methodCombo.SelectedIndex == 0:
@@ -492,5 +505,126 @@ class BestFitScans(StackPanel):  # TBC hosts this panel because cmdData.UIForm n
             manager.AddEndMark(CommandGranularity.Command)
             self.progress(100, "Done" if committed else "Not changed", can_cancel=False)
         if committed:
-            self.log(f"Shifted {len(scans)} scan(s). Use Undo to reverse.")
+            self.log(f"Shifted {len(scans)} scan(s). Use Undo to reverse"
+                     + (" (it also removes the '- before shift' copies)." if backup else "."))
+            if backup:
+                self.log("Other regions that use these scans moved too and have no copy.")
             self.shift = None
+
+    def stored_coordinates(self):
+        """Context in which points are read and written as TBC stores them, without the project's
+        scale factor. Points read with the scale factor and written back get scaled twice."""
+        return PointCloudDatabaseContainer.GetInstance(self.currentProject).TemporarilySetGroundScaleFactorToOne()
+
+    def import_progress(self, pct):
+        if self.Dispatcher.CheckAccess():  # TBC may report from another thread; only update from ours
+            lo, hi = self.import_range
+            self.progress(lo + (hi - lo) * pct / 100.0, f"Writing copy ({pct}%)", can_cancel=False)
+
+    def backup_regions(self, regions, lo, hi):
+        """Inside the caller's transaction: copies each region's points, unmoved, into a new
+        '<name> - before shift' region with a scan of its own (so the shift doesn't move it), hides
+        the copies in the view filters, and returns whether every copy read back as written."""
+        noop = Action[Int32](lambda pct: None)
+        copies, ok = [], True
+        step = (hi - lo) / float(len(regions))
+        for k, r in enumerate(regions):
+            a = lo + k * step
+            name = str(getattr(r, "Name", None) or "(unnamed region)")
+            total = int(r.Integration.PointCount)
+            points, expected, origin = List[PointInfo](), [], None
+            with self.stored_coordinates():
+                for pi in r.Integration.GetPointInfos(noop):
+                    if len(expected) % 50000 == 0:
+                        self.progress(a + 0.3 * step * len(expected) / max(1, total),
+                                      f"Reading '{name}' for the copy {len(expected):,} / {total:,}")
+                    c = pi.Coordinates
+                    if origin is None:
+                        origin = (c.X, c.Y, c.Z)
+                    points.Add(pi)
+                    expected.append((c.X - origin[0], c.Y - origin[1], c.Z - origin[2]))
+            if not expected:
+                continue
+            good, copy = self.write_scan(name + " - before shift", points, expected, origin, a + 0.3 * step, a + step)
+            ok = ok and good
+            copies.append(copy)
+        if copies:
+            self.hide_regions(copies)
+        return ok
+
+    def hide_regions(self, regions):
+        """Hides regions in every writable view filter (cosmetic: failures are only reported)."""
+        project = self.currentProject
+        try:
+            types = project.GetMemberContainer(MandatoryContainers.ImitationTypeCollection)
+            serials = [types.Lookup(r.ImitationTypeGuid).SerialNumber for r in regions]
+            collection = project.GetMemberContainer(MandatoryContainers.ViewFilterCollection)
+            filters = []
+            try:
+                for item in collection:
+                    f = item if hasattr(item, "ImitationTypeOverrides") else project.Concordance.Lookup(item)
+                    if hasattr(f, "ImitationTypeOverrides"):
+                        filters.append(f)
+            except Exception:
+                pass  # not enumerable: fall back to the default filter
+            changed = []
+            for f in filters or [collection.DefaultViewFilter]:
+                if f.IsReadOnly:
+                    continue
+                overrides = f.ImitationTypeOverrides
+                for s in serials:
+                    (overrides[s] if overrides.Contains(s) else overrides.Add(s)).Visible = False
+                try:
+                    f.ResetFilterCache()
+                except Exception:
+                    pass
+                changed.append(str(f.Name))
+            self.log("  copies hidden in view filters: " + (", ".join(changed) or "none writable"))
+        except Exception as ex:
+            self.log(f"  could not hide the copies in the view filters: {ex}")
+
+    def write_scan(self, name, points, expected, origin, lo, hi):
+        """Writes points as a new scan in a new region called name, inside the caller's transaction,
+        and checks that it reads back with the expected count and position. Returns (ok, region).
+        Same as CleanCloud.write_scan (macros are loaded separately, so it is copied)."""
+        project = self.currentProject
+        database = PointCloudDatabaseContainer.GetInstance(project).PrimaryDatabase
+        region_container = ExposedPointCloudRegionContainer.GetInstance(project)
+        noop = Action[Int32](lambda pct: None)
+        ox, oy, oz = origin
+        # compare averages of all points: TBC returns points in its own order, so averages of
+        # every n-th point differ by several mm even when nothing moved
+        expected_centre = centroid(expected)
+        self.progress(lo, "Creating region and station")
+        region = region_container.Add()
+        region.Name = region_container.MakeUniqueRegionName(name)
+        station = database.Add()
+        try:
+            station.Name = database.MakeUniqueStationName(name)
+        except Exception:
+            pass  # the station keeps TBC's default name
+        check_from = lo + 0.7 * (hi - lo)
+        self.import_range = (lo, check_from)
+        with self.stored_coordinates():
+            scan = database.Integration.ImportPoints(points, station, region, False, Action[Int32](self.import_progress))
+            if scan is None:
+                self.log(f"TBC did not create a scan for '{name}'.")
+                return False, region
+            written = int(region.Integration.PointCount)
+            sx = sy = sz = 0.0
+            i = 0
+            for q in region.Integration.GetPoints(noop):
+                if i % 50000 == 0:
+                    self.progress(check_from + (hi - check_from) * i / max(1, written),
+                                  f"Checking '{region.Name}' {i:,} / {written:,}")
+                sx += q.X - ox
+                sy += q.Y - oy
+                sz += q.Z - oz
+                i += 1
+        self.log(f"Copy before the shift: '{region.Name}', {written:,} points (expected {len(expected):,})")
+        if not i:
+            return False, region
+        centre = (sx / i, sy / i, sz / i)
+        off = [centre[k] - expected_centre[k] for k in range(3)]
+        self.log(f"  centre offset dE {off[0] * 1000:+.1f}  dN {off[1] * 1000:+.1f}  dZ {off[2] * 1000:+.1f} mm")
+        return abs(written - len(expected)) <= 0.01 * len(expected) and max(abs(v) for v in off) <= 0.005, region
