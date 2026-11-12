@@ -11,7 +11,9 @@ Optionally (on by default) the moving regions' points are first copied, as they 
 "- before shift" regions with scans of their own, in the same transaction, so the old position
 stays available after the shift.
 
-The fit is the same method as bestfit_clouds.py in the check-georef repository.
+The fit is the same method as bestfit_clouds.py in the check-georef repository, copied here
+because macros run in TBC's IronPython and can't import it (shared_zone, sym3_eig, fit_planes,
+correspond, solve3, median, icp). A fix to the fit here belongs there too, and back.
 """
 import math
 import random
